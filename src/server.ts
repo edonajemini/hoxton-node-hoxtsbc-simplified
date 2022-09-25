@@ -116,7 +116,5 @@ app.post('/sign-in', async (req, res) => {
 app.listen(port, () => {
     console.log(`http://localhost:${port}`);
   });
-function getCurrentUser(token: string) {
-  throw new Error("Function not implemented.");
-}
+
 
