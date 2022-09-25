@@ -15,103 +15,90 @@ const port = 4000;
 
 const SECRET = process.env.SECRET!;
 
-function hash (password: string) {
-  return bcrypt.hashSync(password, 10)
+
+function getToken (id: number) {
+  return jwt.sign({ id: id }, SECRET, {
+    expiresIn: '2 days'
+  })
 }
 
-function verify (password: string, hash: string) {
-  return bcrypt.compareSync(password, hash)
-}
-function generateToken (id: number) {
-  return jwt.sign({ id }, process.env.SECRET!)
+async function getCurrentUser (token: string) {
+  const decodedData = jwt.verify(token, SECRET)
+  const user = await prisma.users.findUnique({
+    // @ts-ignore
+    where: { id: decodedData.id },
+    include: { transactions: true }
+  })
+  return user
 }
 
-// get all users
 app.get("/users", async (req, res) => {
   const users = await prisma.users.findMany({include:{transactions:true}});
   res.send(users);
 });
-//sign-up
+
 app.post('/sign-up', async (req, res) => {
-  const { username, email, password } = req.body
-
   try {
-    const existingUser = await prisma.users.findUnique({ where: { username } })
-
-    const errors: string[] = []
-
-    if (typeof email !== 'string') {
-      errors.push('Email missing or not correct')
-    }
-    if (typeof username !== 'string') {
-      errors.push('Username is missing or not correct')
-    }
-
-    if (typeof password !== 'string') {
-      errors.push('Password missing or not correct')
-    }
-
-    if (errors.length > 0) {
-      res.status(400).send({ errors })
-      return
-    }
-
-    if (existingUser) {
-      res.status(400).send({ errors: ['Username already exists!'] })
-      return
-    }
-
-    const user = await prisma.users.create({
-      data: {username, email, password: hash(password) }
+    const match = await prisma.users.findUnique({
+      where: { username: req.body.username }
     })
-    const token = generateToken(user.id)
-    res.send({ user, token })
-  } catch (error) {
-    // @ts-ignore
-    res.status(400).send({ errors: [error.message] })
-  }
-})
-//sign-in
-app.post('/sign-in', async (req, res) => {
-  try {
-    const username = req.body.username
-    const email = req.body.email
-    const password = req.body.password
 
-    const errors: string[] = []
-
-    if (typeof email !== 'string') {
-      errors.push('Email missing or not correct')
-    }
-    if (typeof username !== 'string') {
-      errors.push('Username is missing or not correct')
-    }
-
-    if (typeof password !== 'string') {
-      errors.push('Password missing or not correct')
-    }
-
-    if (errors.length > 0) {
-      res.status(400).send({ errors })
-      return
-    }
-
-    const user = await prisma.users.findUnique({
-      where: { username }
-    })
-    if (user && verify(password, user.password)) {
-      const token = generateToken(user.id)
-      res.send({ user, token })
+    if (match) {
+      res.status(400).send({ error: 'This account already exists.' })
     } else {
-      res.status(400).send({ errors: ['Username or password invalid.'] })
+      const user = await prisma.users.create({
+        data: {
+          username:req.body.username,
+          email: req.body.email,
+          password: bcrypt.hashSync(req.body.password)
+        },
+        include: { transactions: true }
+      })
+
+      res.send({ user: user, token: getToken(user.id) })
     }
   } catch (error) {
     // @ts-ignore
-    res.status(400).send({ errors: [error.message] })
+    res.status(400).send({ error: error.message })
   }
 })
 
-// get transactions
+app.post('/sign-in', async (req, res) => {
+  const user = await prisma.users.findUnique({
+    where: { username: req.body.username },
+    include: { transactions: true }
+  })
+  if (user && bcrypt.compareSync(req.body.password, user.password)) {
+    res.send({ user: user, token: getToken(user.id) })
+  } else {
+    res.status(400).send({ error: 'Invalid username or password!' })
+  }
+})
+
+app.get('/validate', async (req, res) => {
+  try {
+    if (req.headers.authorization) {
+      const user = await getCurrentUser(req.headers.authorization)
+      // @ts-ignore
+      res.send({ user, token: getToken(user.id) })
+    }
+  } catch (error) {
+    // @ts-ignore
+    res.status(400).send({ error: error.message })
+  }
+})
+
+app.get('/transactions', async (req, res) => {
+  try {
+    // @ts-ignore
+    const user = await getCurrentUser(req.headers.authorization)
+    // @ts-ignore
+    res.send(user?.transactions)
+  } catch (error) {
+    // @ts-ignore
+    res.status(400).send({ error: error.message })
+  }
+})
 
 app.listen(port, () => {
     console.log(`http://localhost:${port}`);
